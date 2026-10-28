@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GESTURE CLASH — 1v1 Arena</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- 3D canvas mounts here -->
+  <div id="game-container"></div>
+
+  <!-- Crosshair -->
+  <div id="crosshair" class="hidden"><div class="dot"></div></div>
+
+  <!-- Top status bar -->
+  <div id="topbar" class="hidden">
+    <div class="pname" id="p0-name">—</div>
+    <div id="status-text">WAITING</div>
+    <div class="pname" id="p1-name">—</div>
+  </div>
+
+  <!-- Webcam preview + gesture status -->
+  <div id="cam-wrap" class="hidden">
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="gesture-status">Gesture: starting camera…</div>
+  </div>
+
+  <!-- Controls help -->
+  <div id="help" class="hidden">
+    🖐️ <b>Gesture:</b> move HAND to aim · PINCH (👌) to shoot · second hand = move<br>
+    ⌨️ <b>Backup:</b> WASD move · mouse aim (click arena) · click / SPACE shoot
+  </div>
+
+  <!-- Big center overlay (countdown / winner / messages) -->
+  <div id="big-overlay" class="hidden"><div id="big-text"></div><div id="big-sub"></div></div>
+
+  <!-- Join / lobby panel -->
+  <div id="lobby">
+    <h1>🥊 GESTURE CLASH</h1>
+    <p class="tag">1v1 first-person arena · your webcam is the controller</p>
+    <div id="join-box">
+      <input id="name-input" maxlength="14" placeholder="Your name (e.g. Arun)">
+      <button id="join-btn">JOIN ARENA</button>
+    </div>
+    <div id="ready-box" class="hidden">
+      <div id="slot-info"></div>
+      <button id="ready-btn">I'M READY ✋</button>
+      <button id="reset-btn" class="ghost">Reset match</button>
+    </div>
+    <div id="lobby-msg">Open this page on BOTH laptops (same WiFi/hotspot), join, and press READY.</div>
+    <div id="notice"></div>
+  </div>
+
+  <script src="/vendor/three.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/vendor/hands/hands.js"></script>
+  <script src="/vendor/camera_utils/camera_utils.js"></script>
+  <script src="/js/gesture.js"></script>
+  <script src="/js/game.js"></script>
+</body>
+</html>

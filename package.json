@@ -1,0 +1,17 @@
+{
+  "name": "gesture-clash",
+  "version": "1.0.0",
+  "description": "Gesture Clash - 1v1 first-person arena controlled by webcam hand gestures. Two laptops, one round, first elimination wins.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/hands": "^0.4.1675469240",
+    "express": "^4.21.2",
+    "selfsigned": "^2.4.1",
+    "socket.io": "^4.8.1",
+    "three": "0.128.0"
+  }
+}
