@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GESTURE CLASH — 1v1 Arena</title>
-<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/style.css?v=20261028b">
 </head>
 <body>
   <!-- 3D canvas mounts here -->
@@ -23,7 +23,8 @@
   <!-- Webcam preview + gesture status -->
   <div id="cam-wrap" class="hidden">
     <video id="webcam" autoplay playsinline muted></video>
-    <div id="gesture-status">Gesture: starting camera…</div>
+    <div id="gesture-status" role="status">Gestures v2: click JOIN to start camera</div>
+    <button id="neutral-btn" type="button">SET NEUTRAL (show both hands)</button>
   </div>
 
   <!-- Controls help -->
@@ -56,7 +57,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/vendor/hands/hands.js"></script>
   <script src="/vendor/camera_utils/camera_utils.js"></script>
-  <script src="/js/gesture.js"></script>
-  <script src="/js/game.js"></script>
+  <script src="/js/gesture.js?v=20261028b"></script>
+  <script src="/js/game.js?v=20261028b"></script>
 </body>
 </html>
