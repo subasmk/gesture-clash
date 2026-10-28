@@ -18,12 +18,14 @@
   // Local player simulation
   const me = { x: 0, z: 0, yaw: 0, pitch: 0, alive: true };
   const opp = { x: 0, z: 0, yaw: 0, pitch: 0, alive: true, name: "" };
-  let playersState = [null, null];
+  let playersState = [null, null], endsAt=null;
 
   // Input intents (gesture + keyboard combined)
   const gestureAim = { x: 0, y: 0 };
   const gestureMove = { x: 0, z: 0 };
   const keys = {};
+  let needsRejoin=false, lastGesture=0;
+  const clearInputs=()=>{for(const k in keys)delete keys[k];gestureAim.x=gestureAim.y=gestureMove.x=gestureMove.z=0;shootQueued=false;};
 
   // ---------- three.js scene ----------
   const scene = new THREE.Scene();
@@ -189,7 +191,14 @@
   }
 
   // ---------- socket flow ----------
-  socket.on("arena", a => buildArena(a));
+  socket.on("arena", a => {if(!arena)buildArena(a);});
+  socket.on('disconnect',()=>{
+    needsRejoin=true;mySlot=null;status='lobby';clearInputs();
+    $('lobby').classList.remove('hidden');$('ready-box').classList.add('hidden');$('join-box').classList.remove('hidden');
+    $('notice').textContent='Connection lost. Reconnecting...';hideBig();
+  });
+  socket.on('connect',()=>{if(needsRejoin){needsRejoin=false;$('notice').textContent='Reconnected. Join again, then both press READY.';}});
+  socket.on('correction',p=>{if(Math.hypot(p.x-me.x,p.z-me.z)>1){me.x=p.x;me.z=p.z;}});
   socket.on("joined", ({ slot, name }) => {
     mySlot = slot; myName = name;
     $("join-box").classList.add("hidden");
@@ -205,7 +214,7 @@
 
   socket.on("state", st => {
     const prev = status;
-    status = st.status; winner = st.winner;
+    status = st.status; winner = st.winner; endsAt=st.endsAt;
     playersState = st.players;
 
     // Top bar
@@ -269,13 +278,14 @@
   });
   socket.on("roundStart", () => showBig("FIGHT! 🥊", "", 750));
   socket.on("roundEnd", ({ winnerSlot, winnerName }) => {
+    const draw=winnerSlot===null;
     const iWon = winnerSlot === mySlot;
-    showBig(iWon ? "🏆 YOU WIN!" : `🏆 ${winnerName} WINS`, iWon ? "Clean elimination!" : "You got eliminated!", 5600);
+    showBig(draw ? "DRAW" : iWon ? "🏆 YOU WIN!" : `🏆 ${winnerName} WINS`, draw ? "90 seconds. Next round in 6 seconds." : iWon ? "Clean elimination!" : "You got eliminated!", 5600);
     if (iWon) sfx.win(); else sfx.lose();
     if (document.pointerLockElement) document.exitPointerLock();
   });
   socket.on("lobbyReset", () => {
-    hideBig();
+    hideBig();clearInputs();
     $("notice").textContent = "Next pair — join & press READY!";
     snapToSpawn();
   });
@@ -315,7 +325,9 @@
   $("reset-btn").addEventListener("click", () => socket.emit("resetMatch"));
 
   addEventListener("keydown", e => {
+    if(e.target instanceof HTMLInputElement)return;
     keys[e.key.toLowerCase()] = true;
+    if(e.key.toLowerCase()==='c'){window.GestureControl.calibrate();clearInputs();}
     if (e.key === " " && status === "playing") { e.preventDefault(); tryShoot(); }
   });
   addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
@@ -335,11 +347,13 @@
   });
 
   let shootQueued = false;
+  addEventListener('blur', clearInputs);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)clearInputs();});
   function tryShoot() { shootQueued = true; }
 
   function startGesture() {
     window.GestureControl.start($("webcam"), {
-      onAim: (x, y) => { gestureAim.x = x; gestureAim.y = y; },
+      onAim: (x, y) => { lastGesture=performance.now();gestureAim.x = x; gestureAim.y = y; },
       onMove: (x, z) => { gestureMove.x = x; gestureMove.z = z; },
       onShoot: () => { if (status === "playing") tryShoot(); },
       onStatus: t => { $("gesture-status").textContent = t; }
@@ -352,7 +366,9 @@
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
 
-    if (mySlot !== null && status === "playing" && me.alive) {
+    if(performance.now()-lastGesture>450){gestureAim.x=gestureAim.y=gestureMove.x=gestureMove.z=0;}
+    if(document.hidden||!document.hasFocus())clearInputs();
+    if (mySlot !== null && status === "playing" && me.alive && document.hasFocus() && !document.hidden) {
       // Gesture aim (velocity style)
       if (gestureAim.x || gestureAim.y) {
         me.yaw -= gestureAim.x * 2.3 * dt;
@@ -376,7 +392,7 @@
         const c = collide(nx, nz);
         me.x = c.x; me.z = c.z;
       }
-      if (shootQueued) { shootQueued = false; socket.emit("shoot"); }
+      if (shootQueued) { shootQueued = false; socket.emit("shoot",{ x: me.x, z: me.z, yaw: me.yaw, pitch: me.pitch }); }
       sendAcc += dt;
       if (sendAcc > 0.066) {
         sendAcc = 0;
@@ -384,6 +400,7 @@
       }
     }
 
+    if(status==='playing'&&endsAt)$('status-text').textContent='FIGHT '+Math.max(0,Math.ceil((endsAt-Date.now())/1000))+'s';
     // Camera
     camera.position.set(me.x, EYE, me.z);
     camera.rotation.y = me.yaw;
