@@ -56,7 +56,7 @@ function newMatch() {
     players: [null, null], // { id, name, x, z, yaw, pitch, ready, alive, lastShotAt }
     winner: null, // slot index
     countdownTimer: null,
-    resetTimer: null
+    resetTimer: null, roundTimer: null, endsAt: null
   };
 }
 match = newMatch();
@@ -66,14 +66,14 @@ function resetPositions() {
     if (!p) return;
     p.x = SPAWNS[i].x; p.z = SPAWNS[i].z;
     p.yaw = SPAWNS[i].yaw; p.pitch = 0;
-    p.alive = true;
+    p.alive = true; p.lastUpdateAt=Date.now(); p.lastShotAt=0;
   });
 }
 
 function publicState() {
   return {
     status: match.status,
-    winner: match.winner,
+    winner: match.winner, endsAt: match.endsAt,
     players: match.players.map(p => p ? {
       name: p.name, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch,
       ready: p.ready, alive: p.alive
@@ -109,22 +109,8 @@ function resolveShot(shooterSlot) {
   const s = match.players[shooterSlot];
   const t = match.players[1 - shooterSlot];
   if (!s || !t || !t.alive) return { hit: false };
-  if (Math.abs(s.pitch) > 1.0) return { hit: false }; // aiming at sky/floor
-
-  const ax = -Math.sin(s.yaw), az = -Math.cos(s.yaw); // aim dir (XZ)
-  const dx = t.x - s.x, dz = t.z - s.z;
-  const dist = Math.hypot(dx, dz);
-  if (dist < 0.001) return { hit: true };
-  const cos = (ax * dx + az * dz) / dist;
-  const angle = Math.acos(Math.max(-1, Math.min(1, cos)));
-  const needed = Math.atan2(HIT_RADIUS, dist);
-  if (angle > needed) return { hit: false };
-
-  // Blocked by cover?
-  for (const b of BOXES) {
-    if (b.h >= 1.2 && segmentHitsBox(s.x, s.z, t.x, t.z, b)) return { hit: false, blocked: true };
-  }
-  return { hit: true };
+  const result = shotHit(s, t, BOXES);
+  return result;
 }
 
 // ---------- App / servers ----------
@@ -136,16 +122,11 @@ app.use("/vendor/hands", express.static(path.join(__dirname, "node_modules/@medi
 app.use("/vendor/camera_utils", express.static(path.join(__dirname, "node_modules/@mediapipe/camera_utils")));
 app.get("/health", (_req, res) => res.json({ ok: true, status: match.status }));
 
-let server;
-let protocol = "https";
-try {
-  const pems = selfsigned.generate([{ name: "commonName", value: "gesture-clash" }], { days: 365, keySize: 2048 });
-  server = https.createServer({ key: pems.private, cert: pems.cert }, app);
-} catch (e) {
-  console.warn("HTTPS setup failed, falling back to HTTP:", e.message);
-  protocol = "http";
-  server = http.createServer(app);
-}
+const { shotHit, validatePosition, localAddresses } = require('./logic');
+const pems = selfsigned.generate([{ name: "commonName", value: "gesture-clash" }], { days: 365, keySize: 2048 });
+// Fail closed: remote webcam capture is not available over ordinary HTTP.
+const server = https.createServer({ key: pems.private, cert: pems.cert }, app);
+const protocol = 'https';
 const io = new Server(server);
 
 // ---------- Flow ----------
@@ -160,19 +141,24 @@ function startCountdown() {
   match.countdownTimer = setTimeout(() => {
     if (match.status !== "countdown") return;
     match.status = "playing";
+    match.endsAt = Date.now() + 90000;
+    match.roundTimer = setTimeout(() => endRound(null), 90000);
     io.emit("roundStart");
     broadcast();
   }, COUNTDOWN_MS);
 }
 
 function endRound(winnerSlot) {
+  if (match.status !== "playing") return;
+  clearTimeout(match.roundTimer);
+  match.endsAt = null;
   match.status = "ended";
   match.winner = winnerSlot;
-  const loser = match.players[1 - winnerSlot];
+  const loser = winnerSlot === null ? null : match.players[1 - winnerSlot];
   if (loser) loser.alive = false;
   io.emit("roundEnd", {
     winnerSlot,
-    winnerName: match.players[winnerSlot] ? match.players[winnerSlot].name : "Player"
+    winnerName: winnerSlot !== null && match.players[winnerSlot] ? match.players[winnerSlot].name : "Player"
   });
   broadcast();
   clearTimeout(match.resetTimer);
@@ -182,6 +168,8 @@ function endRound(winnerSlot) {
 function backToLobby() {
   clearTimeout(match.countdownTimer);
   clearTimeout(match.resetTimer);
+  clearTimeout(match.roundTimer);
+  match.endsAt = null;
   match.status = "lobby";
   match.winner = null;
   match.players.forEach(p => { if (p) { p.ready = false; p.alive = true; } });
@@ -195,6 +183,10 @@ io.on("connection", socket => {
   socket.emit("state", publicState());
 
   socket.on("join", ({ name } = {}) => {
+    if (socket.data.slot !== undefined) {
+      const slot = socket.data.slot;
+      if (match.players[slot]?.id === socket.id) return socket.emit('joined', {slot, name:match.players[slot].name});
+    }
     let slot = match.players.findIndex(p => p === null);
     if (slot === -1) {
       // Reuse a disconnected ghost slot if any (same socket re-joining)
@@ -204,7 +196,7 @@ io.on("connection", socket => {
     match.players[slot] = {
       id: socket.id, name: clean, ready: false, alive: true,
       x: SPAWNS[slot].x, z: SPAWNS[slot].z, yaw: SPAWNS[slot].yaw, pitch: 0,
-      lastShotAt: 0
+      lastShotAt: 0, lastUpdateAt: Date.now()
     };
     socket.data.slot = slot;
     socket.emit("joined", { slot, name: clean });
@@ -223,19 +215,18 @@ io.on("connection", socket => {
     }
   });
 
-  socket.on("update", ({ x, z, yaw, pitch } = {}) => {
-    const slot = socket.data.slot;
-    const p = match.players[slot];
-    if (!p || (match.status !== "playing" && match.status !== "countdown")) return;
-    const half = ARENA.size / 2 - 1;
-    p.x = Math.max(-half, Math.min(half, Number(x) || 0));
-    p.z = Math.max(-half, Math.min(half, Number(z) || 0));
-    p.yaw = Number(yaw) || 0;
-    p.pitch = Math.max(-1.2, Math.min(1.2, Number(pitch) || 0));
-    broadcast();
-  });
+  function applyUpdate(data) {
+    const p = match.players[socket.data.slot];
+    if (!p || p.id !== socket.id || match.status !== 'playing') return;
+    const now=Date.now();
+    const next=validatePosition(p, data, Math.min(.25, (now-p.lastUpdateAt)/1000), ARENA);
+    p.x=next.x; p.z=next.z; p.yaw=next.yaw; p.pitch=next.pitch; p.lastUpdateAt=now;
+    socket.emit('correction', {x:p.x,z:p.z});
+  }
+  socket.on('update', data => {applyUpdate(data); broadcast();});
 
-  socket.on("shoot", () => {
+  socket.on("shoot", (data = {}) => {
+    applyUpdate(data);
     const slot = socket.data.slot;
     const p = match.players[slot];
     if (!p || match.status !== "playing" || !p.alive) return;
@@ -266,18 +257,13 @@ io.on("connection", socket => {
   });
 });
 
-function localIp() {
-  const ifs = os.networkInterfaces();
-  for (const name of Object.keys(ifs)) {
-    for (const net of ifs[name] || []) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
-    }
-  }
-  return "localhost";
-}
-
+function localIp() { return localAddresses(os.networkInterfaces())[0] || 'localhost'; }
 server.listen(PORT, "0.0.0.0", () => {
-  const ip = localIp();
+  const addresses=localAddresses(os.networkInterfaces());
+  const ip = process.env.HOST_IP || localIp();
+  if (!addresses.length) console.warn('No LAN IPv4 detected. Connect to trusted Wi-Fi/hotspot.');
+  console.log('Candidate LAN IPv4 addresses:', addresses.join(', '));
+  console.log('Verify the Wi-Fi/hotspot address with ipconfig; set HOST_IP if needed.');
   console.log(`====================================================`);
   console.log(` GESTURE CLASH SERVER ONLINE (${protocol.toUpperCase()})`);
   console.log(` Player 1 laptop:  ${protocol}://localhost:${PORT}`);
