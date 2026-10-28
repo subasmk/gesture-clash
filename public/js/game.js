@@ -322,6 +322,7 @@
   });
   $("name-input").addEventListener("keydown", e => { if (e.key === "Enter") $("join-btn").click(); });
   $("ready-btn").addEventListener("click", () => socket.emit("ready"));
+  $("neutral-btn").addEventListener("click", () => { window.GestureControl.capture();clearInputs(); });
   $("reset-btn").addEventListener("click", () => socket.emit("resetMatch"));
 
   addEventListener("keydown", e => {
